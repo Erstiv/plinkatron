@@ -5,6 +5,7 @@ import { rm, readFile } from "fs/promises";
 const allowlist = [
   "@google/genai",
   "connect-pg-simple",
+  "dotenv",
   "drizzle-orm",
   "drizzle-zod",
   "express",

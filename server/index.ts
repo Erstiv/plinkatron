@@ -1,3 +1,11 @@
+import { config } from "dotenv";
+import { resolve } from "path";
+
+// Load .env from the app directory (works regardless of PM2 cwd)
+config({ path: resolve(__dirname, "../.env") });
+// Fallback: also try current directory
+config();
+
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
