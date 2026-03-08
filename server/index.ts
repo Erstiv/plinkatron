@@ -1,10 +1,39 @@
-import { config } from "dotenv";
-import { resolve } from "path";
+// ── Load .env manually (no dotenv dependency) ───────────────────
+import { readFileSync, existsSync } from "fs";
+import { resolve, dirname } from "path";
 
-// Load .env from the app directory (works regardless of PM2 cwd)
-config({ path: resolve(__dirname, "../.env") });
-// Fallback: also try current directory
-config();
+function loadEnvFile() {
+  // Try multiple locations to find .env
+  const candidates = [
+    resolve(dirname(__dirname), ".env"),      // parent of dist/
+    resolve(__dirname, ".env"),               // same dir as dist/
+    resolve(__dirname, "../.env"),            // up one from dist/
+    "/var/www/plinkatron/.env",              // absolute fallback
+    resolve(process.cwd(), ".env"),          // current working dir
+  ];
+
+  for (const envPath of candidates) {
+    if (existsSync(envPath)) {
+      const content = readFileSync(envPath, "utf-8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eqIndex = trimmed.indexOf("=");
+        if (eqIndex === -1) continue;
+        const key = trimmed.slice(0, eqIndex).trim();
+        const value = trimmed.slice(eqIndex + 1).trim().replace(/^["']|["']$/g, "");
+        if (!process.env[key]) {
+          process.env[key] = value;
+        }
+      }
+      console.log(`[env] Loaded .env from ${envPath}`);
+      return;
+    }
+  }
+  console.error("[env] WARNING: No .env file found!");
+}
+
+loadEnvFile();
 
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
