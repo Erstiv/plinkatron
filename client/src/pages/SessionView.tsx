@@ -335,6 +335,19 @@ function TrackEditor({
     setDirty(false);
   }
 
+  async function saveAndGenerate() {
+    // Always save current form state to DB before generating
+    await onUpdate(track.id, {
+      title,
+      lyrics: lyrics || null,
+      stylePrompt: style || null,
+      instrumental,
+      status: style ? "has_style" : lyrics ? "has_lyrics" : "empty",
+    });
+    setDirty(false);
+    onGenerate();
+  }
+
   const isGenerating = busy[`gen-${track.id}`] || track.status === "generating";
 
   return (
@@ -434,8 +447,9 @@ function TrackEditor({
           </button>
         )}
         <button
-          onClick={onGenerate}
-          disabled={isGenerating}
+          onClick={saveAndGenerate}
+          disabled={isGenerating || (!lyrics && !instrumental)}
+          title={!lyrics && !instrumental ? "Add lyrics or set to instrumental first" : ""}
           className="bg-rust hover:bg-rust/80 text-paper px-5 py-2 rounded-lg text-sm font-medium transition disabled:opacity-50 flex items-center gap-2"
         >
           {isGenerating ? (

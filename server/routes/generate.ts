@@ -14,6 +14,11 @@ router.post("/:trackId", async (req, res) => {
   const track = await db.query.tracks.findFirst({ where: eq(tracks.id, trackId) });
   if (!track) return res.status(404).json({ error: "Track not found" });
 
+  // Validate: need lyrics OR instrumental flag
+  if (!track.lyrics && !track.instrumental) {
+    return res.status(400).json({ error: "Track needs lyrics or must be set to instrumental" });
+  }
+
   try {
     // Mark as generating
     await db.update(tracks).set({ status: "generating", updatedAt: new Date() }).where(eq(tracks.id, trackId));
