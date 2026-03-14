@@ -10,7 +10,7 @@
  */
 
 function baseUrl(): string {
-  const url = process.env.SUNO_API_URL || "http://localhost:3100";
+  const url = process.env.SUNO_API_URL || "http://localhost:3000";
   return url.replace(/\/+$/, "");
 }
 
