@@ -1,121 +1,143 @@
 /**
- * Suno API Client
- *
- * Talks to the self-hosted gcui-art/suno-api running on the same server.
- * Default: http://localhost:3000
+ * Suno API client — talks to a gcui-art/suno-api instance.
  *
  * Endpoints used:
- *   POST /api/custom_generate  — generate with lyrics + style tags
- *   POST /api/generate         — generate from prompt only
- *   GET  /api/get?ids=x,y      — poll for track status
- *   GET  /api/get_limit         — check remaining credits
+ *   POST /api/generate          — simple generation from prompt
+ *   POST /api/custom_generate   — custom lyrics + style + title
+ *   POST /api/generate_lyrics   — AI lyrics from a concept
+ *   GET  /api/get?ids=x,y       — poll / fetch clips by ID
+ *   GET  /api/get_limit          — check remaining credits
  */
 
-const SUNO_API_BASE = process.env.SUNO_API_URL || "http://localhost:3000";
-
-export interface SunoGenerateRequest {
-  prompt: string; // lyrics (for custom_generate) or description (for generate)
-  tags?: string; // style tags like "indie rock, dreamy, reverb"
-  title?: string;
-  make_instrumental?: boolean;
-  wait_audio?: boolean;
+function baseUrl(): string {
+  const url = process.env.SUNO_API_URL || "http://localhost:3100";
+  return url.replace(/\/+$/, "");
 }
 
-export interface SunoTrack {
+async function sunoFetch<T = any>(path: string, opts?: RequestInit): Promise<T> {
+  const url = `${baseUrl()}${path}`;
+  console.log(`[suno] ${opts?.method || "GET"} ${url}`);
+  const res = await fetch(url, {
+    ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      ...(opts?.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Suno API ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// ── Types ─────────────────────────────────────────────────────────
+
+export interface SunoClip {
   id: string;
-  title: string;
-  audio_url: string;
+  status: string;        // "submitted" | "queued" | "streaming" | "complete"
+  audio_url?: string;
+  stream_audio_url?: string;
   image_url?: string;
+  image_large_url?: string;
+  title?: string;
   tags?: string;
-  status: string;
+  prompt?: string;
   duration?: number;
   created_at?: string;
+  model_name?: string;
+  [key: string]: any;
 }
 
 export interface SunoCredits {
-  credits_left?: number;
-  remaining_credits?: number;
+  credits_left: number;
+  period: string;
+  monthly_limit: number;
+  monthly_usage: number;
 }
 
-// ── Generate a track ─────────────────────────────────────────────
+// ── Simple generation (prompt only) ──────────────────────────────
 
-export async function generateTrack(
-  request: SunoGenerateRequest
-): Promise<SunoTrack[]> {
-  const endpoint = request.tags
-    ? "/api/custom_generate"
-    : "/api/generate";
-
-  const body = request.tags
-    ? {
-        prompt: request.prompt,
-        tags: request.tags,
-        title: request.title || "Untitled",
-        make_instrumental: request.make_instrumental || false,
-        wait_audio: request.wait_audio ?? true,
-      }
-    : {
-        prompt: request.prompt,
-        make_instrumental: request.make_instrumental || false,
-        wait_audio: request.wait_audio ?? true,
-      };
-
-  const res = await fetch(`${SUNO_API_BASE}${endpoint}`, {
+export async function generateSimple(prompt: string, instrumental = false): Promise<SunoClip[]> {
+  return sunoFetch<SunoClip[]>("/api/generate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      prompt,
+      make_instrumental: instrumental,
+      wait_audio: false,
+    }),
   });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Suno API error ${res.status}: ${errText}`);
-  }
-
-  const data = await res.json();
-  return Array.isArray(data) ? data : [data];
 }
 
-// ── Poll for track completion ────────────────────────────────────
+// ── Custom generation (lyrics + style + title) ───────────────────
 
-export async function pollTracks(
-  ids: string[],
-  maxAttempts = 30,
-  intervalMs = 3000
-): Promise<SunoTrack[]> {
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const res = await fetch(
-      `${SUNO_API_BASE}/api/get?ids=${ids.join(",")}`
+export async function generateCustom(opts: {
+  title: string;
+  lyrics?: string;
+  style: string;
+  instrumental?: boolean;
+}): Promise<SunoClip[]> {
+  return sunoFetch<SunoClip[]>("/api/custom_generate", {
+    method: "POST",
+    body: JSON.stringify({
+      prompt: opts.lyrics || "",
+      tags: opts.style,
+      title: opts.title,
+      make_instrumental: opts.instrumental ?? false,
+      wait_audio: false,
+    }),
+  });
+}
+
+// ── Generate lyrics from concept ─────────────────────────────────
+
+export async function generateLyrics(concept: string): Promise<{ text: string; title: string }> {
+  const result = await sunoFetch<any>("/api/generate_lyrics", {
+    method: "POST",
+    body: JSON.stringify({ prompt: concept }),
+  });
+  return { text: result.text || result.lyrics || "", title: result.title || "" };
+}
+
+// ── Poll / fetch clips by ID ────────────────────────────────────
+
+export async function getClips(ids: string[]): Promise<SunoClip[]> {
+  const idsStr = ids.join(",");
+  return sunoFetch<SunoClip[]>(`/api/get?ids=${idsStr}`);
+}
+
+// ── Poll until clip is ready (max ~2 min) ────────────────────────
+
+export async function pollUntilReady(ids: string[], maxAttempts = 40, intervalMs = 3000): Promise<SunoClip[]> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const clips = await getClips(ids);
+    const allDone = clips.every(
+      (c) => c.status === "streaming" || c.status === "complete" || c.audio_url
     );
+    if (allDone) return clips;
 
-    if (!res.ok) {
-      throw new Error(`Suno poll error: ${res.status}`);
-    }
+    const hasError = clips.some((c) => c.status === "error");
+    if (hasError) throw new Error(`Suno generation failed: ${JSON.stringify(clips)}`);
 
-    const tracks: SunoTrack[] = await res.json();
-    const ready = tracks.filter(
-      (t) => t.audio_url && t.status !== "queued" && t.status !== "streaming"
-    );
-
-    if (ready.length === tracks.length) {
-      return ready;
-    }
-
+    console.log(`[suno] poll ${i + 1}/${maxAttempts} — status: ${clips.map((c) => c.status).join(", ")}`);
     await new Promise((r) => setTimeout(r, intervalMs));
   }
-
-  throw new Error("Timed out waiting for Suno tracks to render");
+  throw new Error("Suno generation timed out after polling");
 }
 
-// ── Check credit balance ─────────────────────────────────────────
+// ── Check credits ────────────────────────────────────────────────
 
-export async function getCredits(): Promise<number | null> {
+export async function getCredits(): Promise<SunoCredits> {
+  return sunoFetch<SunoCredits>("/api/get_limit");
+}
+
+// ── Health check — is the Suno API reachable? ────────────────────
+
+export async function checkHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${SUNO_API_BASE}/api/get_limit`);
-    if (!res.ok) return null;
-
-    const data: SunoCredits = await res.json();
-    return data.credits_left ?? data.remaining_credits ?? null;
+    await getCredits();
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }

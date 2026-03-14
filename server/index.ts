@@ -1,132 +1,71 @@
-// ── Load .env manually (no dotenv dependency) ───────────────────
-import { readFileSync, existsSync } from "fs";
-import { resolve, dirname } from "path";
+// Load environment FIRST — before any other imports
+import { loadEnv } from "./env.js";
+loadEnv();
 
-function loadEnvFile() {
-  // Try multiple locations to find .env
-  const candidates = [
-    resolve(dirname(__dirname), ".env"),      // parent of dist/
-    resolve(__dirname, ".env"),               // same dir as dist/
-    resolve(__dirname, "../.env"),            // up one from dist/
-    "/var/www/plinkatron/.env",              // absolute fallback
-    resolve(process.cwd(), ".env"),          // current working dir
-  ];
-
-  for (const envPath of candidates) {
-    if (existsSync(envPath)) {
-      const content = readFileSync(envPath, "utf-8");
-      for (const line of content.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#")) continue;
-        const eqIndex = trimmed.indexOf("=");
-        if (eqIndex === -1) continue;
-        const key = trimmed.slice(0, eqIndex).trim();
-        const value = trimmed.slice(eqIndex + 1).trim().replace(/^["']|["']$/g, "");
-        if (!process.env[key]) {
-          process.env[key] = value;
-        }
-      }
-      console.log(`[env] Loaded .env from ${envPath}`);
-      return;
-    }
-  }
-  console.error("[env] WARNING: No .env file found!");
-}
-
-loadEnvFile();
-
-import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-import { serveStatic } from "./static";
+import express from "express";
 import { createServer } from "http";
+import path from "path";
+import { fileURLToPath } from "url";
+import sessionsRouter from "./routes/sessions.js";
+import tracksRouter from "./routes/tracks.js";
+import generateRouter from "./routes/generate.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const httpServer = createServer(app);
 
-declare module "http" {
-  interface IncomingMessage {
-    rawBody: unknown;
-  }
-}
+// ── Middleware ────────────────────────────────────────────────────
 
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  })
-);
-
+app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// ── Request Logger ───────────────────────────────────────────────
-
-export function log(message: string, source = "plinkatron") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
-
+// Request logger (API calls only)
 app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse).slice(0, 200)}`;
-      }
-      log(logLine);
-    }
-  });
-
+  if (req.path.startsWith("/api")) {
+    const start = Date.now();
+    res.on("finish", () => {
+      console.log(`${req.method} ${req.path} ${res.statusCode} ${Date.now() - start}ms`);
+    });
+  }
   next();
 });
 
-// ── Serve uploaded/generated audio files ─────────────────────────
+// ── API Routes ───────────────────────────────────────────────────
 
-app.use("/uploads", express.static("uploads"));
-app.use("/generated", express.static("generated"));
+app.use("/api/sessions", sessionsRouter);
+app.use("/api/tracks", tracksRouter);
+app.use("/api/generate", generateRouter);
 
-// ── Boot ─────────────────────────────────────────────────────────
-
-(async () => {
-  await registerRoutes(httpServer, app);
-
-  // Global error handler
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-    res.status(status).json({ message });
-    throw err;
+// Health check
+app.get("/api/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    env: {
+      database: !!process.env.DATABASE_URL,
+      suno: !!process.env.SUNO_API_URL,
+      gemini: !!process.env.GEMINI_API_KEY,
+    },
   });
+});
 
-  // Serve static (production) or Vite dev server (development)
-  if (process.env.NODE_ENV === "production") {
-    serveStatic(app);
-  } else {
-    const { setupVite } = await import("./vite");
-    await setupVite(httpServer, app);
-  }
+// ── Static files (production) ────────────────────────────────────
 
-  const port = parseInt(process.env.PORT || "3004", 10);
-  httpServer.listen(
-    { port, host: "0.0.0.0", reusePort: true },
-    () => {
-      log(`serving on port ${port}`);
-    }
-  );
-})();
+if (process.env.NODE_ENV === "production") {
+  const publicDir = path.resolve(__dirname, "public");
+  app.use(express.static(publicDir));
+  // SPA fallback — serve index.html for all non-API routes
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(publicDir, "index.html"));
+  });
+}
+
+// ── Start ────────────────────────────────────────────────────────
+
+const port = parseInt(process.env.PORT || "3004", 10);
+httpServer.listen({ port, host: "0.0.0.0" }, () => {
+  console.log(`[plinkatron] running on port ${port}`);
+  console.log(`[plinkatron] NODE_ENV=${process.env.NODE_ENV}`);
+  console.log(`[plinkatron] DB=${process.env.DATABASE_URL ? "configured" : "MISSING"}`);
+  console.log(`[plinkatron] Suno=${process.env.SUNO_API_URL || "MISSING"}`);
+  console.log(`[plinkatron] Gemini=${process.env.GEMINI_API_KEY ? "configured" : "MISSING"}`);
+});

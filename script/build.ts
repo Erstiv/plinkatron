@@ -1,22 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "fs/promises";
-
-const allowlist = [
-  "@google/genai",
-  "connect-pg-simple",
-  "drizzle-orm",
-  "drizzle-zod",
-  "express",
-  "express-session",
-  "memoizee",
-  "multer",
-  "nanoid",
-  "openid-client",
-  "passport",
-  "pg",
-  "zod",
-];
+import { rm, cp } from "fs/promises";
 
 async function buildAll() {
   await rm("dist", { recursive: true, force: true });
@@ -25,26 +9,28 @@ async function buildAll() {
   await viteBuild();
 
   console.log("building server...");
-  const pkg = JSON.parse(await readFile("package.json", "utf-8"));
-  const allDeps = [
-    ...Object.keys(pkg.dependencies || {}),
-    ...Object.keys(pkg.devDependencies || {}),
-  ];
-  const externals = allDeps.filter((dep) => !allowlist.includes(dep));
-
   await esbuild({
     entryPoints: ["server/index.ts"],
     platform: "node",
+    format: "esm",
     bundle: true,
-    format: "cjs",
-    outfile: "dist/index.cjs",
+    outfile: "dist/index.mjs",
+    banner: {
+      // Fix for __dirname / __filename in ESM
+      js: `import { createRequire } from 'module'; import { fileURLToPath as __fileURLToPath } from 'url'; import { dirname as __pathDirname } from 'path'; const __filename = __fileURLToPath(import.meta.url); const __dirname = __pathDirname(__filename); const require = createRequire(import.meta.url);`,
+    },
+    external: [
+      // Keep native/binary deps external
+      "pg-native",
+    ],
     define: {
       "process.env.NODE_ENV": '"production"',
     },
-    minify: true,
-    external: externals,
+    minify: false, // keep readable for debugging
     logLevel: "info",
   });
+
+  console.log("build complete!");
 }
 
 buildAll().catch((err) => {

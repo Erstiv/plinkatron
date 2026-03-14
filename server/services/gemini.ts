@@ -1,241 +1,90 @@
 /**
- * Gemini API Client
- *
- * Used by producers for:
- *   - Concept brainstorming (album themes, track arcs)
- *   - Lyric writing and editing
- *   - Style prompt generation
- *   - Cover art prompt creation
- *   - Reference song analysis interpretation
+ * Gemini service — uses @google/genai for lyrics writing and concept brainstorming.
  */
-
 import { GoogleGenAI } from "@google/genai";
 
-let genAIClient: GoogleGenAI | null = null;
-
-function getClient(): GoogleGenAI {
-  if (!genAIClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
-    genAIClient = new GoogleGenAI({ apiKey });
-  }
-  return genAIClient;
+function getClient() {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY not set");
+  return new GoogleGenAI({ apiKey: key });
 }
 
-// ── Generate text content ────────────────────────────────────────
-
-export async function generateText(
-  prompt: string,
-  options?: {
-    model?: string;
-    temperature?: number;
-    maxOutputTokens?: number;
-  }
-): Promise<string> {
-  const client = getClient();
-  const model = options?.model || "gemini-2.5-pro";
-
-  const response = await client.models.generateContent({
+async function generate(prompt: string, model = "gemini-2.5-pro-preview-06-05"): Promise<string> {
+  const ai = getClient();
+  const res = await ai.models.generateContent({
     model,
     contents: prompt,
-    config: {
-      temperature: options?.temperature ?? 0.7,
-      maxOutputTokens: options?.maxOutputTokens ?? 8192,
-    },
   });
-
-  return response.text || "";
+  return res.text?.trim() || "";
 }
 
-// ── Generate JSON content (with markdown fence stripping) ────────
+// ── Brainstorm an album/session concept ──────────────────────────
 
-export async function generateJSON<T = Record<string, unknown>>(
-  prompt: string,
-  options?: {
-    model?: string;
-    temperature?: number;
-    maxOutputTokens?: number;
-  }
-): Promise<T> {
-  const raw = await generateText(prompt, {
-    ...options,
-    temperature: options?.temperature ?? 0.3,
-  });
-
-  // Strip markdown code fences (Gemini sometimes wraps JSON)
-  let cleaned = raw.trim();
-  if (cleaned.startsWith("```")) {
-    cleaned = cleaned.split("```")[1];
-    if (cleaned.startsWith("json")) {
-      cleaned = cleaned.slice(4);
-    }
-  }
-
-  return JSON.parse(cleaned.trim());
-}
-
-// ── Brainstorm album concept ─────────────────────────────────────
-
-export async function brainstormConcept(input: {
+export async function brainstormConcept(opts: {
+  name?: string;
   genre?: string;
   mood?: string;
   influences?: string;
-  description?: string;
-}): Promise<{
-  albumTitle: string;
-  concept: string;
-  trackSuggestions: Array<{
-    number: number;
-    title: string;
-    description: string;
-    role: string; // opener, build, climax, closer, interlude
-  }>;
-  moodArc: string;
-}> {
-  const prompt = `You are a creative music producer brainstorming an album concept.
+}): Promise<string> {
+  const prompt = `You are a creative music producer. Brainstorm a cohesive album concept.
 
-Based on the following input, create a cohesive album concept:
+Details provided:
+- Album name: ${opts.name || "(not decided)"}
+- Genre: ${opts.genre || "(open)"}
+- Mood: ${opts.mood || "(open)"}
+- Influences: ${opts.influences || "(none specified)"}
 
-GENRE: ${input.genre || "any"}
-MOOD: ${input.mood || "any"}
-INFLUENCES: ${input.influences || "none specified"}
-DESCRIPTION: ${input.description || "none"}
+Write a 2-3 paragraph concept description that includes:
+1. The overall theme/narrative arc
+2. Suggested track ideas (just names and one-line descriptions)
+3. The sonic palette (instruments, production style)
 
-Return ONLY valid JSON with this exact structure:
-{
-  "albumTitle": "suggested album title",
-  "concept": "2-3 sentence album concept/narrative",
-  "trackSuggestions": [
-    {
-      "number": 1,
-      "title": "track title",
-      "description": "what this track sounds/feels like",
-      "role": "opener"
-    }
-  ],
-  "moodArc": "description of how the album builds emotionally from start to finish"
-}
+Be creative and specific. Write in a conversational tone.`;
 
-Suggest 8-12 tracks. Each track should have a role: opener, build, climax, cooldown, closer, or interlude.
-The album should feel like a journey with emotional peaks and valleys.`;
-
-  return generateJSON(prompt);
+  return generate(prompt);
 }
 
 // ── Write lyrics for a track ─────────────────────────────────────
 
-export async function writeLyrics(input: {
-  trackTitle: string;
-  description: string;
-  genre: string;
-  mood: string;
-  albumConcept?: string;
-}): Promise<{
-  lyrics: string;
-  structure: string;
-  sunoReady: boolean;
-  warnings: string[];
-}> {
-  const prompt = `You are a professional songwriter.
-
-Write lyrics for the following track:
-
-TITLE: ${input.trackTitle}
-DESCRIPTION: ${input.description}
-GENRE: ${input.genre}
-MOOD: ${input.mood}
-${input.albumConcept ? `ALBUM CONTEXT: ${input.albumConcept}` : ""}
-
-IMPORTANT RULES (Suno compatibility):
-- Do NOT use any real artist names, band names, or proper nouns of real people
-- Do NOT reference specific copyrighted songs
-- Use [Verse], [Chorus], [Bridge], [Outro] structure tags
-- Keep total length under 3000 characters
-- Write emotionally authentic lyrics that fit the mood
-
-Return ONLY valid JSON:
-{
-  "lyrics": "the full lyrics with [Verse] [Chorus] etc. tags",
-  "structure": "verse-chorus-verse-chorus-bridge-chorus-outro",
-  "sunoReady": true,
-  "warnings": ["any issues found, or empty array"]
-}`;
-
-  return generateJSON(prompt);
-}
-
-// ── Generate style prompt from description ───────────────────────
-
-export async function generateStylePrompt(input: {
-  description: string;
+export async function writeLyrics(opts: {
+  title: string;
+  concept?: string;
   genre?: string;
   mood?: string;
-  referenceAnalysis?: string;
-}): Promise<{
-  stylePrompt: string;
-  tags: string[];
-}> {
-  const prompt = `You are a music production expert creating a Suno AI style prompt.
+}): Promise<string> {
+  const prompt = `You are a songwriter. Write lyrics for a song.
 
-Based on the following, create a concise style description and tags:
+Title: ${opts.title}
+${opts.concept ? `Album concept: ${opts.concept}` : ""}
+${opts.genre ? `Genre: ${opts.genre}` : ""}
+${opts.mood ? `Mood: ${opts.mood}` : ""}
 
-DESCRIPTION: ${input.description}
-GENRE: ${input.genre || "any"}
-MOOD: ${input.mood || "any"}
-${input.referenceAnalysis ? `REFERENCE SONG ANALYSIS: ${input.referenceAnalysis}` : ""}
+Write complete song lyrics with verses, chorus, and a bridge.
+Use Suno-compatible metatags like [Verse], [Chorus], [Bridge], [Outro].
+Keep total length under 3000 characters (Suno's limit).
+Return ONLY the lyrics, no explanations.`;
 
-RULES:
-- Tags should be comma-separated genre/mood/instrument descriptors
-- NO artist names, band names, or proper nouns of real people
-- Keep the style prompt under 200 characters
-- Be specific about instruments, tempo feel, and production style
-
-Return ONLY valid JSON:
-{
-  "stylePrompt": "dreamy indie rock, reverb-heavy guitars, soft female vocals, 120 BPM",
-  "tags": ["indie rock", "dreamy", "reverb", "soft vocals"]
-}`;
-
-  return generateJSON(prompt);
+  return generate(prompt);
 }
 
-// ── Generate cover art prompt ────────────────────────────────────
+// ── Generate a Suno style prompt ─────────────────────────────────
 
-export async function generateArtPrompt(input: {
-  albumTitle: string;
-  concept: string;
-  lyrics?: string;
-  genre: string;
-  mood: string;
-}): Promise<{
-  imagePrompt: string;
-  negativePrompt: string;
-  colorPalette: string[];
-  artDirection: string;
-}> {
-  const prompt = `You are a visual art director creating album cover art concepts.
+export async function generateStylePrompt(opts: {
+  title: string;
+  genre?: string;
+  mood?: string;
+  concept?: string;
+}): Promise<string> {
+  const prompt = `You are a music production expert. Generate a Suno AI style/tags string for a song.
 
-Create an image generation prompt for album cover art:
+Title: ${opts.title}
+${opts.genre ? `Genre: ${opts.genre}` : ""}
+${opts.mood ? `Mood: ${opts.mood}` : ""}
+${opts.concept ? `Album concept: ${opts.concept}` : ""}
 
-ALBUM: ${input.albumTitle}
-CONCEPT: ${input.concept}
-GENRE: ${input.genre}
-MOOD: ${input.mood}
-${input.lyrics ? `LYRICS EXCERPT: ${input.lyrics.slice(0, 500)}` : ""}
+Return ONLY a comma-separated list of genre tags and style descriptors.
+Example: "indie rock, dreamy guitars, reverb-heavy vocals, slow tempo, melancholic"
+Keep it under 200 characters. Do NOT include artist names. Return ONLY the tags.`;
 
-RULES:
-- The prompt should describe a visual scene, not text
-- No text or typography in the image
-- Should feel like a professional album cover
-- 80-150 words for the image prompt
-
-Return ONLY valid JSON:
-{
-  "imagePrompt": "detailed visual description for image generation",
-  "negativePrompt": "things to avoid: text, letters, watermarks, low quality",
-  "colorPalette": ["#hex1", "#hex2", "#hex3", "#hex4"],
-  "artDirection": "brief description of the visual style"
-}`;
-
-  return generateJSON(prompt);
+  return generate(prompt);
 }
