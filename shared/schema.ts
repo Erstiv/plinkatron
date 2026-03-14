@@ -20,6 +20,8 @@ export const sessions = pgTable("sessions", {
   mood: text("mood"),                 // e.g. "melancholic", "upbeat"
   influences: text("influences"),     // e.g. "Radiohead, Bon Iver"
   targetTrackCount: integer("target_track_count").default(5),
+  coverArtUrl: text("cover_art_url"),        // generated album cover
+  coverArtPrompt: text("cover_art_prompt"),  // prompt used to generate it
   status: text("status").notNull().default("draft"),  // draft | generating | complete
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -48,6 +50,7 @@ export const tracks = pgTable("tracks", {
   sunoClipId: text("suno_clip_id"),    // clip ID from Suno response
   audioUrl: text("audio_url"),         // URL to the generated audio
   imageUrl: text("image_url"),         // Suno cover image
+  coverArtUrl: text("cover_art_url"), // custom Imagen-generated cover
   duration: integer("duration"),       // seconds
   // Metadata
   sunoMeta: jsonb("suno_meta"),        // full Suno response for this track

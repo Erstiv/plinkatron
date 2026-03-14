@@ -48,12 +48,16 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+// ── Serve uploaded files (artwork, etc.) ─────────────────────────
+
+app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
+
 // ── Static files (production) ────────────────────────────────────
 
 if (process.env.NODE_ENV === "production") {
   const publicDir = path.resolve(__dirname, "public");
   app.use(express.static(publicDir));
-  // SPA fallback — serve index.html for all non-API routes
+  // SPA fallback — serve index.html for all non-API, non-uploads routes
   app.get("*", (_req, res) => {
     res.sendFile(path.join(publicDir, "index.html"));
   });

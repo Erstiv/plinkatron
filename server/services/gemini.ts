@@ -1,7 +1,9 @@
 /**
- * Gemini service — uses @google/genai for lyrics writing and concept brainstorming.
+ * Gemini service — uses @google/genai for lyrics, concepts, and cover art generation.
  */
 import { GoogleGenAI } from "@google/genai";
+import { writeFileSync, mkdirSync, existsSync } from "fs";
+import { resolve } from "path";
 
 function getClient() {
   const key = process.env.GEMINI_API_KEY;
@@ -87,4 +89,72 @@ Example: "indie rock, dreamy guitars, reverb-heavy vocals, slow tempo, melanchol
 Keep it under 200 characters. Do NOT include artist names. Return ONLY the tags.`;
 
   return generate(prompt);
+}
+
+// ── Generate an art prompt for album/track cover ─────────────────
+
+export async function generateArtPrompt(opts: {
+  sessionName?: string;
+  trackTitle?: string;
+  concept?: string;
+  genre?: string;
+  mood?: string;
+  type: "album" | "track";
+}): Promise<string> {
+  const prompt = `You are an album cover art director. Create a detailed image generation prompt for a ${opts.type} cover.
+
+${opts.sessionName ? `Album: ${opts.sessionName}` : ""}
+${opts.trackTitle ? `Track: ${opts.trackTitle}` : ""}
+${opts.concept ? `Concept: ${opts.concept}` : ""}
+${opts.genre ? `Genre: ${opts.genre}` : ""}
+${opts.mood ? `Mood: ${opts.mood}` : ""}
+
+Write a detailed, vivid image prompt that would work for AI image generation.
+The image should be square (album cover format), visually striking, and match the music's mood.
+Do NOT include any text, words, or typography in the image — pure visual art only.
+Keep the prompt under 500 characters. Return ONLY the prompt, no explanations.`;
+
+  return generate(prompt);
+}
+
+// ── Generate cover art image via Imagen ──────────────────────────
+
+export async function generateCoverArt(opts: {
+  prompt: string;
+  sessionId: number;
+  trackId?: number;
+}): Promise<{ imagePath: string; imageUrl: string }> {
+  const ai = getClient();
+
+  const response = await ai.models.generateImages({
+    model: "imagen-4.0-generate-001",
+    prompt: opts.prompt,
+    config: {
+      numberOfImages: 1,
+      aspectRatio: "1:1",
+    } as any,
+  });
+
+  if (!response.generatedImages || response.generatedImages.length === 0) {
+    throw new Error("Imagen returned no images");
+  }
+
+  const imgBytes = response.generatedImages[0].image?.imageBytes;
+  if (!imgBytes) throw new Error("No image bytes in response");
+
+  // Save to uploads directory
+  const uploadsDir = resolve(process.cwd(), "uploads", "artwork");
+  if (!existsSync(uploadsDir)) mkdirSync(uploadsDir, { recursive: true });
+
+  const filename = opts.trackId
+    ? `session-${opts.sessionId}-track-${opts.trackId}-${Date.now()}.png`
+    : `session-${opts.sessionId}-cover-${Date.now()}.png`;
+  const filePath = resolve(uploadsDir, filename);
+  const buffer = Buffer.from(imgBytes, "base64");
+  writeFileSync(filePath, buffer);
+
+  return {
+    imagePath: filePath,
+    imageUrl: `/uploads/artwork/${filename}`,
+  };
 }

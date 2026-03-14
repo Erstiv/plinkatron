@@ -58,13 +58,15 @@ router.post("/", async (req, res) => {
 // Update session
 router.patch("/:id", async (req, res) => {
   const id = parseInt(req.params.id);
-  const { name, concept, genre, mood, influences, targetTrackCount, status } = req.body;
+  const { name, concept, genre, mood, influences, targetTrackCount, status, coverArtUrl, coverArtPrompt } = req.body;
   const [updated] = await db.update(sessions)
     .set({
       ...(name !== undefined && { name }),
       ...(concept !== undefined && { concept }),
       ...(genre !== undefined && { genre }),
       ...(mood !== undefined && { mood }),
+      ...(coverArtUrl !== undefined && { coverArtUrl }),
+      ...(coverArtPrompt !== undefined && { coverArtPrompt }),
       ...(influences !== undefined && { influences }),
       ...(targetTrackCount !== undefined && { targetTrackCount }),
       ...(status !== undefined && { status }),

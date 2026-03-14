@@ -40,6 +40,10 @@ export const api = {
   sunoLyrics: (concept: string) => apiFetch("/generate/suno/lyrics", { method: "POST", body: JSON.stringify({ concept }) }),
   getCredits: () => apiFetch("/generate/credits"),
 
+  // Artwork
+  generateArtPrompt: (data: any) => apiFetch("/generate/ai/art-prompt", { method: "POST", body: JSON.stringify(data) }),
+  generateCoverArt: (data: any) => apiFetch("/generate/ai/cover-art", { method: "POST", body: JSON.stringify(data) }),
+
   // Health
   health: () => apiFetch("/health"),
 };

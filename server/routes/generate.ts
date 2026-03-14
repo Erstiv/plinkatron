@@ -122,6 +122,61 @@ router.post("/suno/lyrics", async (req, res) => {
   }
 });
 
+// ── AI: Generate art prompt ──────────────────────────────────────
+// POST /api/generate/ai/art-prompt
+router.post("/ai/art-prompt", async (req, res) => {
+  try {
+    const { sessionId, trackId, type } = req.body;
+    let sessionData: any = null;
+    let trackData: any = null;
+
+    if (sessionId) {
+      sessionData = await db.query.sessions.findFirst({ where: eq(sessions.id, sessionId) });
+    }
+    if (trackId) {
+      trackData = await db.query.tracks.findFirst({ where: eq(tracks.id, trackId) });
+    }
+
+    const prompt = await gemini.generateArtPrompt({
+      sessionName: sessionData?.name,
+      trackTitle: trackData?.title,
+      concept: sessionData?.concept,
+      genre: sessionData?.genre,
+      mood: sessionData?.mood,
+      type: type || "album",
+    });
+    res.json({ prompt });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── AI: Generate cover art image ─────────────────────────────────
+// POST /api/generate/ai/cover-art
+router.post("/ai/cover-art", async (req, res) => {
+  try {
+    const { prompt, sessionId, trackId } = req.body;
+    if (!prompt) return res.status(400).json({ error: "prompt is required" });
+    if (!sessionId) return res.status(400).json({ error: "sessionId is required" });
+
+    console.log(`[artwork] generating cover art for session ${sessionId}${trackId ? ` track ${trackId}` : ""}`);
+    const { imagePath, imageUrl } = await gemini.generateCoverArt({ prompt, sessionId, trackId });
+    console.log(`[artwork] saved to ${imagePath}`);
+
+    // Save to DB
+    if (trackId) {
+      await db.update(tracks).set({ coverArtUrl: imageUrl, updatedAt: new Date() }).where(eq(tracks.id, trackId));
+    } else {
+      await db.update(sessions).set({ coverArtUrl: imageUrl, coverArtPrompt: prompt, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
+    }
+
+    res.json({ imageUrl, prompt });
+  } catch (err: any) {
+    console.error("[artwork] error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Check Suno credits ───────────────────────────────────────────
 // GET /api/generate/credits
 router.get("/credits", async (_req, res) => {

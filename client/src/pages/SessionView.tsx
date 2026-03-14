@@ -13,6 +13,7 @@ interface Track {
   instrumental: boolean;
   audioUrl: string | null;
   imageUrl: string | null;
+  coverArtUrl: string | null;
   duration: number | null;
 }
 
@@ -23,6 +24,8 @@ interface Session {
   genre: string | null;
   mood: string | null;
   influences: string | null;
+  coverArtUrl: string | null;
+  coverArtPrompt: string | null;
   status: string;
   tracks: Track[];
 }
@@ -134,6 +137,28 @@ export default function SessionView() {
     }
   }
 
+  async function handleGenerateCoverArt() {
+    if (!session) return;
+    setBusy((b) => ({ ...b, coverArt: true }));
+    try {
+      // First get an art prompt from Gemini
+      const { prompt } = await api.generateArtPrompt({
+        sessionId: session.id,
+        type: "album",
+      });
+      // Then generate the actual image
+      const { imageUrl } = await api.generateCoverArt({
+        prompt,
+        sessionId: session.id,
+      });
+      setSession((s) => s ? { ...s, coverArtUrl: imageUrl, coverArtPrompt: prompt } : s);
+    } catch (err: any) {
+      alert("Cover art generation failed: " + err.message);
+    } finally {
+      setBusy((b) => ({ ...b, coverArt: false }));
+    }
+  }
+
   if (loading) {
     return <div className="flex justify-center py-20"><div className="loader" /></div>;
   }
@@ -176,6 +201,45 @@ export default function SessionView() {
           <p className="text-sm text-paper/80 whitespace-pre-wrap">
             {session.concept || "No concept yet. Click AI Brainstorm to generate one."}
           </p>
+        </div>
+
+        {/* Album Cover Art */}
+        <div className="mt-4 bg-paper/5 rounded-lg p-4 border border-paper/10">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-muted uppercase tracking-wider">Album Cover Art</span>
+            <button
+              onClick={handleGenerateCoverArt}
+              disabled={busy.coverArt}
+              className="text-xs text-gold hover:text-gold/80 transition disabled:opacity-50"
+            >
+              {busy.coverArt ? "Generating..." : "Generate Cover Art"}
+            </button>
+          </div>
+          {session.coverArtUrl ? (
+            <div className="flex gap-4 items-start">
+              <img
+                src={session.coverArtUrl}
+                alt="Album cover"
+                className="w-40 h-40 rounded-lg object-cover border border-paper/10"
+              />
+              <div className="flex-1">
+                {session.coverArtPrompt && (
+                  <p className="text-xs text-muted/60 italic">{session.coverArtPrompt}</p>
+                )}
+                <button
+                  onClick={handleGenerateCoverArt}
+                  disabled={busy.coverArt}
+                  className="mt-2 text-xs text-rust hover:text-rust/80 transition disabled:opacity-50"
+                >
+                  Regenerate
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted/40">
+              {busy.coverArt ? "Creating your album artwork..." : "Click Generate to create AI cover art via Imagen"}
+            </p>
+          )}
         </div>
       </div>
 
